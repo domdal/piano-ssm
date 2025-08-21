@@ -29,7 +29,7 @@ n_instruments = 10
 
 model_base = PianoSSM_XL_MH
 model_pth = "pretrained_models/PianoSSM_XL_MH_maestro_all_44100_model.pth"
-midi_step = 60 # Lenght of Audio in seconds
+midi_step = 60 # Length of Audio in seconds generate at once (Means reset every midi_step seconds)
 device = 0
 
 
@@ -50,26 +50,23 @@ year_list = [2004, 2006, 2008, 2009, 2011, 2013, 2014, 2015, 2017, 2018]
 year_idx = torch.tensor(year_list.index(int(year)), dtype=torch.int32)
 year = torch.tensor([year_idx]).to(device)
 
-midi_length = midi_step*midi_rate
 start_time = time.time()
-with torch.no_grad():
-    audio_synth = []
-    i = 0
-    input = {"midi": midi_matrix[:,i:i+midi_length], "year": year}
-    output = model(input)
-    audio = output["audio"].detach().cpu()
-    audio_synth.append(audio)
 
-    audio_synth = torch.cat(audio_synth, dim=1)
-    audio_synth = audio_synth * audio_std + audio_mean
+audio_synth = []
+print(len(midi_matrix), midi_matrix.shape)
+with torch.no_grad():
+    for i in range(0,midi_matrix.shape[1],midi_step*midi_rate):
+        print(f"Processing {i} to {i+midi_step*midi_rate} of {midi_matrix.shape[1]}")
+        input = {"midi": midi_matrix[:,i:i+midi_step*midi_rate], "year": year}
+        output = model(input)
+        audio = output["audio"].detach().cpu()
+        audio_synth.append(audio)
+
+audio_synth = torch.cat(audio_synth, dim=1)
+audio_synth = audio_synth * audio_std + audio_mean
 
 print(f"Time: {time.time() - start_time}")
 
-orig_audio, orig_sample_rate = torchaudio.load(f"{midi_file}.wav")
-transform = torchaudio.transforms.Resample(orig_freq=orig_sample_rate, new_freq=synth_sample_rate)
-orig_audio = transform(orig_audio.mean(dim=0,keepdim=True))
-orig_audio = orig_audio[:, :audio_synth.shape[1]]
-
 audio_synth = audio_synth.squeeze(2)
 
-torchaudio.save(f"{midi_file.replace(midi_file.split('.')[-1], '.wav')}", audio_synth, sample_rate=synth_sample_rate)
+torchaudio.save(f"{midi_file.replace(midi_file.split('.')[-1], 'wav')}", audio_synth, sample_rate=synth_sample_rate)
