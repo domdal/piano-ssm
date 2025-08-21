@@ -24,7 +24,7 @@ n_instruments = 10
 # Normal -- 1 instrument
 
 model_base = PianoSSM_XL_MH
-model_pth = "models/PianoSSM_XL_MH_maestro_all_44100_model.pth"
+model_pth = "pretrained_models/PianoSSM_XL_MH_maestro_all_44100_model.pth"
 midi_step = 60 # Lenght of Audio in seconds
 device = 0
 
