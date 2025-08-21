@@ -1,0 +1,234 @@
+# %%
+import math
+import torch
+from torch.optim.lr_scheduler import _LRScheduler
+
+# Adapted from https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup/blob/master/cosine_annealing_warmup/scheduler.py
+
+class CosineAnnealingWarmupRestarts(_LRScheduler):
+    """
+        optimizer (Optimizer): Wrapped optimizer.
+        first_cycle_steps (int): First cycle step size.
+        cycle_mult(float): Cycle steps magnification. Default: -1.
+        max_lr(float): First cycle's max learning rate. Default: 0.1.
+        min_lr(float): Min learning rate. Default: 0.001.
+        warmup_steps(int): Linear warmup step size. Default: 0.
+        gamma(float): Decrease rate of max learning rate by cycle. Default: 1.
+        last_epoch (int): The index of last epoch. Default: -1.
+    """
+    
+    def __init__(self,
+                 optimizer : torch.optim.Optimizer,
+                 first_cycle_steps : int,
+                 cycle_mult : float = 1.,
+                 max_lr : float = 0.1,
+                 min_lr : float = 0.001,
+                 warmup_steps : int = 0,
+                 gamma : float = 1.,
+                 last_epoch : int = -1
+        ):
+        assert warmup_steps < first_cycle_steps
+        
+        self.first_cycle_steps = first_cycle_steps # first cycle step size
+        self.cycle_mult = cycle_mult # cycle steps magnification
+        self.base_max_lr = max_lr # first max learning rate
+        self.max_lr = max_lr # max learning rate in the current cycle
+        self.min_lr = min_lr # min learning rate
+        self.warmup_steps = warmup_steps # warmup step size
+        self.gamma = gamma # decrease rate of max learning rate by cycle
+        
+        self.cur_cycle_steps = first_cycle_steps # first cycle step size
+        self.cycle = 0 # cycle count
+        self.step_in_cycle = last_epoch # step size of the current cycle
+        
+        super(CosineAnnealingWarmupRestarts, self).__init__(optimizer, last_epoch)
+        
+        # set learning rate min_lr
+        self.init_lr()
+    
+    def init_lr(self):
+        self.base_lrs = []
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.min_lr
+            self.base_lrs.append(self.min_lr)
+    
+    def get_lr(self):
+        if self.step_in_cycle == -1:
+            return self.base_lrs
+        elif self.step_in_cycle < self.warmup_steps:
+            return [(self.max_lr - base_lr)*self.step_in_cycle / self.warmup_steps + base_lr for base_lr in self.base_lrs]
+        else:
+            return [base_lr + (self.max_lr - base_lr) \
+                    * (1 + math.cos(math.pi * (self.step_in_cycle-self.warmup_steps) \
+                                    / (self.cur_cycle_steps - self.warmup_steps))) / 2
+                    for base_lr in self.base_lrs]
+
+    def step(self, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+            self.step_in_cycle = self.step_in_cycle + 1
+            if self.step_in_cycle >= self.cur_cycle_steps:
+                self.cycle += 1
+                self.step_in_cycle = self.step_in_cycle - self.cur_cycle_steps
+                self.cur_cycle_steps = int((self.cur_cycle_steps - self.warmup_steps) * self.cycle_mult) + self.warmup_steps
+        else:
+            if epoch >= self.first_cycle_steps:
+                if self.cycle_mult == 1.:
+                    self.step_in_cycle = epoch % self.first_cycle_steps
+                    self.cycle = epoch // self.first_cycle_steps
+                else:
+                    n = int(math.log((epoch / self.first_cycle_steps * (self.cycle_mult - 1) + 1), self.cycle_mult))
+                    self.cycle = n
+                    self.step_in_cycle = epoch - int(self.first_cycle_steps * (self.cycle_mult ** n - 1) / (self.cycle_mult - 1))
+                    self.cur_cycle_steps = self.first_cycle_steps * self.cycle_mult ** (n)
+            else:
+                self.cur_cycle_steps = self.first_cycle_steps
+                self.step_in_cycle = epoch
+                
+        self.max_lr = self.base_max_lr * (self.gamma**self.cycle)
+        self.last_epoch = math.floor(epoch)
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
+
+class CosineAnnealingWarmupRestartsSlowStart(_LRScheduler):
+    """
+    A learning rate scheduler with cosine annealing, warmup, and slow start 
+    applied only during the first cycle.
+    
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        first_cycle_steps (int): First cycle step size.
+        cycle_mult(float): Cycle steps magnification. Default: 1.
+        max_lr(float): First cycle's max learning rate. Default: 0.1.
+        min_lr(float): Min learning rate. Default: 0.001.
+        warmup_steps(int): Linear warmup step size. Default: 0.
+        gamma(float): Decrease rate of max learning rate by cycle. Default: 1.
+        last_epoch (int): The index of last epoch. Default: -1.
+        slow_start_steps (int): Linear slow start step size, used only in the first cycle. Default: 0.
+    """
+    
+    def __init__(self,
+                 optimizer: torch.optim.Optimizer,
+                 first_cycle_steps: int,
+                 cycle_mult: float = 1.,
+                 max_lr: float = 0.1,
+                 min_lr: float = 0.001,
+                 warmup_steps: int = 0,
+                 gamma: float = 1.,
+                 last_epoch: int = -1,
+                 slow_start_steps: int = 0):
+        assert warmup_steps < first_cycle_steps
+        
+        self.first_cycle_steps = first_cycle_steps
+        self.cycle_mult = cycle_mult
+        self.base_max_lr = max_lr
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.warmup_steps = warmup_steps
+        self.gamma = gamma
+        self.slow_start_steps = slow_start_steps
+        
+        self.cur_cycle_steps = first_cycle_steps
+        self.cycle = 0
+        self.step_in_cycle = last_epoch
+        
+        super(CosineAnnealingWarmupRestartsSlowStart, self).__init__(optimizer, last_epoch)
+        self.init_lr()
+    
+    def init_lr(self):
+        self.base_lrs = []
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.min_lr
+            self.base_lrs.append(self.min_lr)
+    
+    def get_lr(self):
+        if self.step_in_cycle == -1:
+            return self.base_lrs
+        
+        # Apply slow start only during the first cycle
+        if self.cycle == 0 and self.step_in_cycle < self.slow_start_steps:
+            return [(self.min_lr + (base_lr - self.min_lr) * self.step_in_cycle / self.slow_start_steps) for base_lr in self.base_lrs]
+        
+        # In the first cycle after slow start, or all subsequent cycles, apply normal warmup and cosine annealing
+        if self.cycle == 0:
+            effective_step_in_cycle = self.step_in_cycle - self.slow_start_steps if self.step_in_cycle >= self.slow_start_steps else 0
+            effective_warmup_steps = self.warmup_steps - self.slow_start_steps if self.warmup_steps > self.slow_start_steps else 0
+            cur_cycle_steps_without_slow_start = self.cur_cycle_steps - self.slow_start_steps
+        else:
+            effective_step_in_cycle = self.step_in_cycle
+            effective_warmup_steps = self.warmup_steps
+            cur_cycle_steps_without_slow_start = self.cur_cycle_steps
+
+        # Regular warmup in all cycles (first cycle after slow start and all subsequent cycles)
+        if effective_step_in_cycle < effective_warmup_steps:
+            return [(self.max_lr - base_lr) * (effective_step_in_cycle / effective_warmup_steps) + base_lr for base_lr in self.base_lrs]
+        else:
+            return [base_lr + (self.max_lr - base_lr) *
+                    (1 + math.cos(math.pi * (effective_step_in_cycle - effective_warmup_steps) / (cur_cycle_steps_without_slow_start - effective_warmup_steps))) / 2
+                    for base_lr in self.base_lrs]
+    
+    def step(self, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+            self.step_in_cycle = self.step_in_cycle + 1
+            if self.step_in_cycle >= self.cur_cycle_steps:
+                self.cycle += 1
+                self.step_in_cycle = self.step_in_cycle - self.cur_cycle_steps
+                self.cur_cycle_steps = int((self.cur_cycle_steps - self.warmup_steps) * self.cycle_mult) + self.warmup_steps
+        else:
+            if epoch >= self.first_cycle_steps:
+                if self.cycle_mult == 1.:
+                    self.step_in_cycle = epoch % self.first_cycle_steps
+                    self.cycle = epoch // self.first_cycle_steps
+                else:
+                    n = int(math.log((epoch / self.first_cycle_steps * (self.cycle_mult - 1) + 1), self.cycle_mult))
+                    self.cycle = n
+                    self.step_in_cycle = epoch - int(self.first_cycle_steps * (self.cycle_mult ** n - 1) / (self.cycle_mult - 1))
+                    self.cur_cycle_steps = self.first_cycle_steps * self.cycle_mult ** (n)
+            else:
+                self.cur_cycle_steps = self.first_cycle_steps
+                self.step_in_cycle = epoch
+        
+        self.max_lr = self.base_max_lr * (self.gamma ** self.cycle)
+        self.last_epoch = math.floor(epoch)
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
+
+if __name__ == "__main__":
+
+    import torch
+    import torch.optim as optim
+    import matplotlib.pyplot as plt
+
+    model = torch.nn.Linear(2, 1)
+    optimizer = optim.SGD(model.parameters(), lr=0.0001)
+    max_lr = 0.0001*5
+    min_lr = 0.00001
+    epochs = 200
+    first_cycle_steps = 40
+    cycle_mult  = 1.0
+    warmup_steps = 20
+    gamma = (min_lr/max_lr)**(1/(epochs/first_cycle_steps))
+    scheduler = CosineAnnealingWarmupRestarts(optimizer, 
+                                              first_cycle_steps=first_cycle_steps, 
+                                              cycle_mult=cycle_mult, 
+                                              max_lr=max_lr, 
+                                              min_lr=min_lr, 
+                                              warmup_steps=warmup_steps, 
+                                              gamma=gamma)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=10, eta_min=0.00005)
+
+    lrs = []
+    for epoch in range(epochs):
+        scheduler.step()
+        lrs.append(scheduler.get_lr()[0])
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(y=lrs, mode='lines', name='Learning Rate'))
+    fig.update_layout(title='Learning Rate Schedule',
+                      xaxis_title='Epoch',
+                      yaxis_title='Learning Rate',
+                      hovermode='x unified')
+    fig.show()

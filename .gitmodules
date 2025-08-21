@@ -1,0 +1,3 @@
+[submodule "S-Edge_PianoSSM"]
+	path = S-Edge_PianoSSM
+	url = git@github.com:domdal/S-Edge_PianoSSM.git
