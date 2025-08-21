@@ -21,7 +21,8 @@ output/
 output_alt/ 
 plot/models/
 
-
+*.mid
+*.midi
 *.wav
 *.html
 *.svg
