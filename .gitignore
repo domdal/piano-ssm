@@ -18,11 +18,9 @@ slurm*
 output/
 results/
 output/
-output_alt/
-output/
 output_alt/ 
 plot/models/
-models/
+
 
 *.wav
 *.html
